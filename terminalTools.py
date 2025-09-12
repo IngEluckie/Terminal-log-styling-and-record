@@ -3,6 +3,9 @@
 """
 Tool for terminal font styling and log registration for
 activity control.
+
+log: CsvManager = CsvManager("log")
+logger: Logger = Logger(log)
 """
 
 # Import libraries
@@ -11,11 +14,12 @@ from typing import Any, Tuple, Optional, List, Final
 from dataclasses import dataclass, field
 from datetime import datetime, date, timedelta
 import time
+import csv
 
-# Date helper
-# Return example: [11/Aug/2025 20:41:36]
 @dataclass
 class FechaHora:
+    # Date helper
+    # Return example: [11/Aug/2025 20:41:36]
     registro: str = ""
 
     def __post_init__(self):
@@ -81,6 +85,97 @@ class CsvManager:
     def changeFileName(self):
         pass
 
+    def searchRows(
+        self,
+        query: str,
+        *,
+        exact: bool = False,
+        column: Optional[int] = None,
+        case_sensitive: bool = False,
+        column_name: Optional[str] = None,
+        has_header: bool = False,
+        trim_trailing_empty: bool = True,
+        delimiter: str = ","
+    ) -> List[List[str]]:
+        """
+        Busca filas que coincidan con `query`.
+
+        Parámetros:
+        - query: texto a buscar.
+        - exact: si True, compara igualdad; si False, busca subcadena.
+        - column: índice de columna a filtrar (0-based). Si None, busca en todas.
+        - case_sensitive: sensibilidad a mayúsculas/minúsculas.
+        - column_name: nombre de columna (requiere has_header=True) para resolver `column`.
+        - has_header: si True, la primera fila es encabezado.
+        - trim_trailing_empty: si True, elimina campos vacíos al final de la fila
+          (útil si tus filas terminan con una coma).
+        - delimiter: delimitador CSV (por defecto coma).
+
+        Retorna:
+        - Lista de filas (cada fila como list[str]) que cumplan la condición.
+        """
+        results: List[List[str]] = []
+
+        if not self.filepath.exists():
+            self._saveError("Archivo no encontrado para búsqueda")
+            return results
+
+        try:
+            with self.filepath.open("r", encoding="utf-8", newline="") as f:
+                reader = csv.reader(f, delimiter=delimiter, skipinitialspace=True)
+
+                header: Optional[List[str]] = None
+                if has_header:
+                    try:
+                        header = next(reader)
+                    except StopIteration:
+                        return results
+                    if column_name is not None:
+                        try:
+                            column = header.index(column_name)
+                        except ValueError:
+                            self._saveError(f"Columna no encontrada: {column_name}")
+                            return results
+
+                # Normalización para sensibilidad
+                q = query if case_sensitive else query.lower()
+
+                for row in reader:
+                    if not row:
+                        continue
+
+                    # Mitigar la coma al final generada por addEntry/addTopRow
+                    if trim_trailing_empty:
+                        while row and row[-1] == "":
+                            row.pop()
+
+                    # Selección de campos a evaluar
+                    fields = row if column is None else ([row[column]] if column < len(row) else [])
+
+                    # Comparación
+                    def norm(x: str) -> str:
+                        return x if case_sensitive else x.lower()
+
+                    matched = False
+                    for field in fields:
+                        text = norm(str(field))
+                        if exact:
+                            if text == q:
+                                matched = True
+                                break
+                        else:
+                            if q in text:
+                                matched = True
+                                break
+
+                    if matched:
+                        results.append(row)
+
+        except Exception as e:
+            self._saveError(f"Error en searchRows: {e}")
+
+        return results
+
     # Internal tooling
     def _saveError(self, error: str = "Causa no especificada") -> None:
         """
@@ -102,6 +197,7 @@ _CYAN: Final[str] = "\033[96m"
 _GREEN: Final[str] = "\033[92m"
 _GRAY: Final[str] = "\033[90m"
 _RESET: Final[str] = "\033[0m"
+_BLACK: Final[str] = "\033[30m"
 
 class Logger:
     """
@@ -118,6 +214,9 @@ class Logger:
         self._disposed: bool = False
 
     # ---------- API pública ----------
+    def newLog(self, text: str) -> None:
+        self._save("Log", text, _BLACK)
+
     def error(self, text: str) -> None:
         self._save("ERROR", text, _RED)
 
